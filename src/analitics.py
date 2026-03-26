@@ -1,21 +1,14 @@
-from collections.abc import Sequence
 from pathlib import Path
 
 import numpy
 from pandas import DataFrame
 
 from src.configs import DetectionConfig
-from src.domain import TableEvent, TableEventKind, TableZone
+from src.domain import TableEventKind, TableZone
 
 
 class EventAnalytics:
     """Table of events and metric "empty table -> next approach"."""
-
-    @staticmethod
-    def events_to_dataframe(events: Sequence[TableEvent]) -> DataFrame:
-        if not events:
-            return DataFrame(columns=["frame", "time_sec", "event"])
-        return DataFrame([event.as_dict() for event in events])
 
     @staticmethod
     def empty_to_approach_delays(df: DataFrame) -> list[float]:
