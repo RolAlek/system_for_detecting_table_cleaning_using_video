@@ -20,13 +20,24 @@ class Label(StrEnum):
     OCCUPIED = "table: OCCUPIED"
 
 
+def _close_select_roi_window(window_title: str) -> None:
+    try:
+        cv2.destroyWindow(window_title)
+    except cv2.error:
+        pass
+    
+    for _ in range(20):
+        cv2.waitKey(1)
+    cv2.destroyAllWindows()
+
+
 def select_table_zone_on_first_frame(
     first_frame: numpy.ndarray,
     window_title: str,
 ) -> TableZone:
     """Interactive selection of the table zone on the first frame (mouse, like in OpenCV)."""
     roi = cv2.selectROI(window_title, first_frame, showCrosshair=True, fromCenter=False)
-    cv2.destroyWindow(window_title)
+    _close_select_roi_window(window_title)
     x, y, w, h = map(int, roi[:4])
 
     if w <= 0 or h <= 0:

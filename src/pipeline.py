@@ -1,4 +1,6 @@
 import argparse
+import logging
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 from types import TracebackType
@@ -6,10 +8,10 @@ from typing import Self, Type
 
 import cv2
 import numpy
-from cv2 import VideoCapture, VideoWriter, destroyAllWindows, imwrite
 from pandas import DataFrame
+from tqdm import tqdm
 
-from src.analitics import EventAnalytics
+from src.analytics import EventAnalytics
 from src.configs import DetectionConfig
 from src.debounced_table_fsm import DebouncedTableStateMachine
 from src.domain import TableEvent
@@ -20,9 +22,11 @@ from src.visualization import (
     select_table_zone_on_first_frame,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class TableVideoPipeline:
-    """Сборка: видео → детекция → FSM → визуализация → отчёт."""
+    """Pipeline: video → detection → FSM → visualization → report."""
 
     def __init__(
         self,
@@ -33,9 +37,9 @@ class TableVideoPipeline:
         self._config = config
         self._analytics = EventAnalytics()
 
-        self._cap: VideoCapture | None = None
+        self._cap: cv2.VideoCapture | None = None
         self._fourcc: int | None = None
-        self._writer: VideoWriter | None = None
+        self._writer: cv2.VideoWriter | None = None
         self._fps: float = 25.0
         self._width: int = 0
         self._height: int = 0
@@ -46,14 +50,14 @@ class TableVideoPipeline:
         self._open_video(video_path)
 
         if self._cap is None or not self._cap.isOpened():
-            raise SystemExit(f"Не удалось открыть видео: {video_path}")
+            raise SystemExit(f"Failed to open video: {video_path}")
 
         self._fps = self._cap.get(cv2.CAP_PROP_FPS) or 25.0
         self._width = int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self._height = int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         self._n_frames = int(self._cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 0
 
-        self._fourcc = VideoWriter.fourcc(*"mp4v")
+        self._fourcc = cv2.VideoWriter.fourcc(*"mp4v")
 
         return self
 
@@ -69,7 +73,7 @@ class TableVideoPipeline:
         if self._cap is not None:
             self._cap.release()
 
-        destroyAllWindows()
+        cv2.destroyAllWindows()
 
     def run(self) -> None:
         if self._cap is None:
@@ -80,14 +84,14 @@ class TableVideoPipeline:
             self._cap.release()
             raise SystemExit("Failed to read first frame")
 
-        print("Выделите стол мышью в окне и нажмите Enter или Space.")
-        table_zone = select_table_zone_on_first_frame(first, "Выделите зону столика")
+        logger.info("Select the table with the mouse in the window and press Enter or Space.")
+        table_zone = select_table_zone_on_first_frame(first, "Select the table zone")
 
         self._create_writer(Path(self._args.output))
         if self._writer is None:
             raise RuntimeError("Failed to create writer")
 
-        print("Загрузка YOLOv8n (при первом запуске скачается вес)...")
+        logger.info("Loading YOLOv8n (will be downloaded on the first run)...")
         detector = PersonDetector(self._config)
         fsm = DebouncedTableStateMachine(self._config.debounce_frames)
 
@@ -99,34 +103,49 @@ class TableVideoPipeline:
         frame_idx = 0
         self._cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
-        while True:
-            ok, frame = self._cap.read()
-            if not ok or frame is None:
-                break
+        total_frames = self._n_frames if self._n_frames > 0 else None
+        show_bar = not self._args.no_progress and sys.stderr.isatty()
 
-            raw_in_zone, person_boxes = detector.detect_people_in_table_zone(
-                frame, table_zone
-            )
-            fsm.update(frame_idx, self._fps, raw_in_zone)
+        with tqdm(
+            total=total_frames,
+            unit="fr",
+            desc="Frames",
+            file=sys.stderr,
+            dynamic_ncols=True,
+            mininterval=0.25,
+            disable=not show_bar,
+        ) as pbar:
+            while True:
+                ok, frame = self._cap.read()
+                if not ok or frame is None:
+                    break
 
-            draw_table_status(frame, table_zone, fsm.logical_occupied)
-            draw_person_boxes(frame, person_boxes)
+                raw_in_zone, person_boxes = detector.detect_people_in_table_zone(
+                    frame, table_zone
+                )
+                fsm.update(frame_idx, self._fps, raw_in_zone)
 
-            self._writer.write(frame)
-            last_vis_frame = frame
+                draw_table_status(frame, table_zone, fsm.logical_occupied)
+                draw_person_boxes(frame, person_boxes)
 
-            if not saved_problem and frame_idx >= problem_frame_idx:
-                cv2.imwrite(str(Path(self._args.problem_frame)), frame)
-                saved_problem = True
+                self._writer.write(frame)
+                last_vis_frame = frame
 
-            frame_idx += 1
+                if not saved_problem and frame_idx >= problem_frame_idx:
+                    cv2.imwrite(str(Path(self._args.problem_frame)), frame)
+                    saved_problem = True
+
+                frame_idx += 1
+                pbar.update(1)
 
         if not saved_problem and last_vis_frame is not None:
-            imwrite(filename=str(Path(self._args.problem_frame)), img=last_vis_frame)
+            cv2.imwrite(
+                filename=str(Path(self._args.problem_frame)), img=last_vis_frame
+            )
 
         dataframe = self._convert_events_to_dataframe(fsm.events)
         mean_delay = self._analytics.mean_delay_empty_to_approach(dataframe)
-        self._analytics.print_summary(dataframe, mean_delay)
+        self._analytics.log_summary(dataframe, mean_delay)
         self._analytics.write_report(
             Path(self._args.report),
             Path(self._args.video),
@@ -135,20 +154,21 @@ class TableVideoPipeline:
             dataframe,
             mean_delay,
         )
-        print(f"\nВидео сохранено: {Path(self._args.output).resolve()}")
-        print(f"Отчёт: {Path(self._args.report).resolve()}")
+        logger.info("")
+        logger.info("Video saved: %s", Path(self._args.output).resolve())
+        logger.info("Report: %s", Path(self._args.report).resolve())
 
     def _open_video(self, video_path: Path) -> None:
         if not video_path.is_file():
-            raise SystemExit(f"Файл видео не найден: {video_path}")
+            raise SystemExit(f"Video file not found: {video_path}")
 
-        self._cap = VideoCapture(str(video_path))
+        self._cap = cv2.VideoCapture(str(video_path))
 
     def _create_writer(self, out_path: Path) -> None:
         if self._fourcc is None:
             raise ValueError("FourCC is not set")
 
-        self._writer = VideoWriter(
+        self._writer = cv2.VideoWriter(
             filename=str(out_path),
             fourcc=self._fourcc,
             fps=self._fps,

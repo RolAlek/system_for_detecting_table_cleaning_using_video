@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 import numpy
@@ -5,6 +6,8 @@ from pandas import DataFrame
 
 from src.configs import DetectionConfig
 from src.domain import TableEventKind, TableZone
+
+logger = logging.getLogger(__name__)
 
 
 class EventAnalytics:
@@ -42,26 +45,30 @@ class EventAnalytics:
 
         return float(numpy.mean(delays))
 
-    def print_summary(self, df: DataFrame, mean_delay: float | None) -> None:
+    def log_summary(self, df: DataFrame, mean_delay: float | None) -> None:
         if df.empty:
-            print(
-                "Событий не зафиксировано (видео слишком короткое или нет смены состояния)."
-            )
+            logger.info("Events not recorded (video too short or no state change).")
             return
 
-        print("\n--- События (первые строки) ---")
-        print(df.head(20).to_string(index=False))
-        print(f"\nВсего событий: {len(df)}")
+        logger.info("")
+        logger.info("--- Events (first rows) ---")
+        logger.info("\n%s", df.head(20).to_string(index=False))
+        logger.info("")
+        logger.info("Total events: %s", len(df))
 
         delays = self.empty_to_approach_delays(df)
         if delays:
-            print(f"Интервалы пустой стол -> следующий подход (сек): {delays}")
-            print(
-                "Среднее время между уходом (пустой стол) и подходом следующего: "
-                f"{mean_delay:.3f} с"
+            logger.info(
+                "Empty table -> next approach (sec): %s",
+                ", ".join(f"{v:.3f}" for v in delays),
             )
+            if mean_delay is not None:
+                logger.info(
+                    "Average time between empty table and next approach: %.3f sec",
+                    mean_delay,
+                )
         else:
-            print("Нет пар «empty -> approach» для расчёта средней задержки.")
+            logger.info("No pairs «empty -> approach» for average delay calculation.")
 
     @staticmethod
     def write_report(
@@ -73,10 +80,10 @@ class EventAnalytics:
         mean_delay: float | None,
     ) -> None:
         lines: list[str] = [
-            "Отчёт: прототип детекции у столика",
-            f"Видео: {video_path}",
-            f"Зона столика (x, y, ширина, высота): ({table_zone.x}, {table_zone.y}, {table_zone.w}, {table_zone.h})",
-            f"Дебаунс кадров: {config.debounce_frames}, YOLO conf: {config.yolo_conf}, overlap ratio: {config.person_table_overlap_ratio}",
+            "Report: prototype detection at the table",
+            f"Video: {video_path}",
+            f"Table zone (x, y, width, height): ({table_zone.x}, {table_zone.y}, {table_zone.w}, {table_zone.h})",
+            f"Debounce frames: {config.debounce_frames}, YOLO conf: {config.yolo_conf}, overlap ratio: {config.person_table_overlap_ratio}",
             "",
         ]
 
@@ -84,12 +91,19 @@ class EventAnalytics:
             lines.append(df.to_csv(index=False))
             lines.append("")
 
+        delays = EventAnalytics.empty_to_approach_delays(df)
+        if delays:
+            lines.append(
+                f"Empty table -> next approach (sec): {', '.join(f'{v:.3f}' for v in delays)}"
+            )
+            lines.append("")
+
         if mean_delay is not None:
             lines.append(
-                f"Среднее время пустой стол -> следующий подход: {mean_delay:.3f} сек"
+                f"Average time between empty table and next approach: {mean_delay:.3f} sec"
             )
 
         else:
-            lines.append("Среднее время: н/д (нет подходящих интервалов)")
+            lines.append("Average time: N/A (no suitable intervals)")
 
         path.write_text("\n".join(lines), encoding="utf-8")
