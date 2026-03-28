@@ -67,6 +67,12 @@ class TableZone:
     w: int
     h: int
 
+    def __post_init__(self) -> None:
+        if self.w <= 0 or self.h <= 0:
+            raise ValueError(
+                "Table zone not selected: width and height must be greater than zero."
+            )
+
     def to_bounding_box(self) -> BoundingBox:
         """The same area in the format "two opposite corner points" - for comparison with people's frames."""
         return BoundingBox(

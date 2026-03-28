@@ -21,11 +21,12 @@ class Label(StrEnum):
 
 
 def _close_select_roi_window(window_title: str) -> None:
+    """Close the select ROI window."""
     try:
         cv2.destroyWindow(window_title)
     except cv2.error:
         pass
-    
+
     for _ in range(20):
         cv2.waitKey(1)
     cv2.destroyAllWindows()
@@ -38,14 +39,8 @@ def select_table_zone_on_first_frame(
     """Interactive selection of the table zone on the first frame (mouse, like in OpenCV)."""
     roi = cv2.selectROI(window_title, first_frame, showCrosshair=True, fromCenter=False)
     _close_select_roi_window(window_title)
-    x, y, w, h = map(int, roi[:4])
 
-    if w <= 0 or h <= 0:
-        raise SystemExit(
-            "Table zone not selected: width and height must be greater than zero."
-        )
-
-    return TableZone(x, y, w, h)
+    return TableZone(*roi[:4])
 
 
 def draw_table_status(
@@ -53,6 +48,7 @@ def draw_table_status(
     table_zone: TableZone,
     logical_occupied: bool | None,
 ) -> None:
+    """Draw the table status on the frame."""
     color = BGR_RED if logical_occupied is True else BGR_GREEN
 
     cv2.rectangle(
@@ -79,11 +75,12 @@ def draw_person_boxes(
     frame_bgr: numpy.ndarray,
     person_boxes: list[BoundingBox],
 ) -> None:
+    """Draw the person boxes on the frame."""
     for box in person_boxes:
         cv2.rectangle(
-            frame_bgr,
-            (int(box.x1), int(box.y1)),
-            (int(box.x2), int(box.y2)),
-            BGR_BLUE,
-            BOX_THICKNESS,
+            img=frame_bgr,
+            pt1=(int(box.x1), int(box.y1)),
+            pt2=(int(box.x2), int(box.y2)),
+            color=BGR_BLUE,
+            thickness=BOX_THICKNESS,
         )

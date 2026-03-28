@@ -9,20 +9,24 @@ class DebouncedTableStateMachine:
 
     def __init__(self, debounce_frames: int) -> None:
         self._debounce_frames = debounce_frames
+
         self._logical_occupied: bool | None = None
-        self._raw_streak = 0
+        self._raw_streak: int = 0
         self._last_raw: bool | None = None
         self._events: list[TableEvent] = []
 
     @property
     def events(self) -> list[TableEvent]:
+        """Get the list of events."""
         return self._events
 
     @property
     def logical_occupied(self) -> bool | None:
+        """Get the current logical state of the table."""
         return self._logical_occupied
 
     def update(self, frame_idx: int, fps: float, raw_person_in_zone: bool) -> None:
+        """Update the FSM with a new frame."""
         self._advance_raw_streak(raw_person_in_zone)
 
         if self._logical_occupied is None:
@@ -45,6 +49,7 @@ class DebouncedTableStateMachine:
             self._raw_streak = 1
 
     def _append_event(self, frame_idx: int, fps: float, kind: TableEventKind) -> None:
+        """Append a new event to the list."""
         self._events.append(TableEvent.at_frame(frame_idx, fps, kind))
 
     def _try_commit_initial_logical_state(self, frame_idx: int, fps: float) -> None:
