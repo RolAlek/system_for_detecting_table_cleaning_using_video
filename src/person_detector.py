@@ -1,5 +1,3 @@
-from typing import List
-
 import numpy
 from ultralytics import YOLO
 
@@ -10,17 +8,21 @@ from src.domain import BoundingBox, TableZone
 class PersonDetector:
     """Wrapper over YOLO: people on the frame and flag "person in the table zone"."""
 
-    def __init__(self, config: DetectionConfig, weights: str = "yolov8n.pt") -> None:
+    def __init__(
+        self,
+        config: DetectionConfig,
+        table_zone: TableZone,
+        weights: str = "yolov8n.pt",
+    ) -> None:
         self._cfg = config
+        self._table_zone = table_zone
         self._model = YOLO(weights)
 
     def detect_people_in_table_zone(
         self,
         frame_bgr: numpy.ndarray,
-        table_zone: TableZone,
     ) -> tuple[bool, list[BoundingBox]]:
-        in_zone = False
-        boxes: List[BoundingBox] = []
+        """Detect people in the table zone."""
 
         results = self._model.predict(
             frame_bgr,
@@ -28,22 +30,21 @@ class PersonDetector:
             classes=[self._cfg.person_class_id],
             verbose=False,
         )
-        if not results:
-            return in_zone, boxes
+        if not results or not results[0].boxes:
+            return False, []
 
-        detected_boxes = results[0].boxes
-        if not detected_boxes:
-            return in_zone, boxes
-
-        person_boxes_corner_coords = detected_boxes.xyxy.cpu().numpy()
-        ratio = self._cfg.person_table_overlap_ratio
+        person_boxes_corner_coords = results[0].boxes.xyxy.cpu().numpy()
+        in_zone = False
+        boxes: list[BoundingBox] = []
 
         for corner_coords in person_boxes_corner_coords:
-            x1, y1, x2, y2 = map(float, corner_coords[:4].tolist())
-            box = BoundingBox(x1, y1, x2, y2)
+            box = BoundingBox(*corner_coords[:4].tolist())
             boxes.append(box)
 
-            if box.overlaps_table_zone(table_zone, ratio):
+            if box.overlaps_table_zone(
+                table_zone=self._table_zone,
+                min_overlap_ratio=self._cfg.person_table_overlap_ratio,
+            ):
                 in_zone = True
 
         return in_zone, boxes
