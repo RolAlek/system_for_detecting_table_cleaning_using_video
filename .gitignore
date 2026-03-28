@@ -205,3 +205,10 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Artifacts
+media/
+output_videos/
+reports/
+problem_frames/
+yolov8n.pt
